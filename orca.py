@@ -5,9 +5,11 @@ import subprocess
 import time
 import sys
 import select
+import tty
+import termios
 from datetime import datetime
 
-# Import rich for the beautiful TUI
+# Import Rich
 try:
     from rich.console import Console
     from rich.panel import Panel
@@ -24,6 +26,14 @@ try:
     import serial.tools.list_ports
 except ImportError:
     print("Please install the 'pyserial' library: pip install pyserial")
+    exit()
+
+# Import pynput for raw keyboard hardware monitoring
+try:
+    from pynput import keyboard
+except ImportError:
+    print("Please install the 'pynput' library: pip install pynput")
+    print("(Note for Mac users: You may need to grant your terminal Accessibility permissions in System Settings)")
     exit()
 
 # Initialize the Rich Console
@@ -44,6 +54,11 @@ EXTRUSION_COEFFICIENT = 0.33    # Scaling factor for extrusion
 DO_AUTO_PRESSURIZE = True
 PRESSURIZE_AMOUNT = 0.2
 PRESSURIZE_SPEED = 400
+
+# Jog Settings
+JOG_DISTANCE = 0.2              # Distance in mm per keystroke tick
+JOG_SPEED_MM_MIN = 300          # The F-value for jogging speed
+HIGH_PRECISION_JOG = True       # Start in high precision mode
 
 # Serial Connection Settings
 BAUD_RATE = 115200
@@ -68,25 +83,23 @@ def display_header():
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣴⡶⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡠⠂⠀⠀⠀ | |__| | | \ \| |____ / ____ \ 
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣵⣿⣿⣅⠀⠀⠀⠀⢈⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠂⠀⠀⠀⠀⠀  \____/|_|  \_\\_____/_/    \_\
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣶⣦⣌⠁⠀⠉⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⡞⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠜⠁⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.3[/cyan]
+⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.10[/cyan]
 ⢠⠖⠋⠉⠀⢀⠀⠂⣌⢇⠀⣰⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⣄⠀⡀⠀⠀⢀⣽⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⣐⠰⠂⠀⠀⠀⠀⡀⣠⣴⣾⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠛⠓⠒⠲⢤⣀⣐⣤⡞⣸⢊⠥⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠀⢀⣤⣿⣿⣿⣿⣿⣿⣿⡿⠟⠋⢄⣀⠀⠠⠤⠴⠂⠈⠁⢰⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⢿⠃⠀⠀⠸⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠉⠉⠉⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢖⣦⣀⢻⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⣿⣿⣿⣿⠃⠀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠛⠾⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⣿⡿⠛⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀
 """
-    # Replace the braille blank characters with standard spaces so they don't render as dots
     splash = splash.replace('\u2800', ' ')
     console.print(splash, style="bold white")
 
 def settings_menu():
-    global COORDINATE_MODE, EXTRUSION_COEFFICIENT, DO_AUTO_PRESSURIZE
+    global COORDINATE_MODE, EXTRUSION_COEFFICIENT, DO_AUTO_PRESSURIZE, HIGH_PRECISION_JOG
     
     while True:
         console.clear()
         display_header()
         
-        # Build Configuration Table
         config_table = Table(show_header=True, header_style="bold yellow", expand=True, title="[bold cyan]Current Configuration[/bold cyan]")
         config_table.add_column("Parameter")
         config_table.add_column("Value", style="cyan")
@@ -97,15 +110,17 @@ def settings_menu():
         config_table.add_row("Z Syringe (mm)", str(Z_SYRINGE_DIAMETER), "A Syringe (mm)", str(A_SYRINGE_DIAMETER))
         config_table.add_row("Z Nozzle (mm)", str(Z_NOZZLE_DIAMETER), "A Nozzle (mm)", str(A_NOZZLE_DIAMETER))
         config_table.add_row("Extrusion Coeff.", str(EXTRUSION_COEFFICIENT), "Auto-Pressurize", "[green]ON[/green]" if DO_AUTO_PRESSURIZE else "[red]OFF[/red]")
+        config_table.add_row("Jog Precision", "[green]HIGH[/green]" if HIGH_PRECISION_JOG else "[yellow]LOW[/yellow]", "", "")
         
         console.print(config_table)
         console.print("\n[bold yellow]--- Options Menu ---[/bold yellow]")
         console.print("[1] Change Extrusion Coefficient")
         console.print("[2] Toggle Auto-Pressurize")
         console.print("[3] Toggle Coordinate Mode (G90/G91)")
-        console.print("[4] Return to Main Menu\n")
+        console.print("[4] Toggle Jog Precision Mode")
+        console.print("[5] Return to Main Menu\n")
         
-        choice = Prompt.ask("[bold yellow]Choose an option[/bold yellow]", choices=["1", "2", "3", "4"])
+        choice = Prompt.ask("[bold yellow]Choose an option[/bold yellow]", choices=["1", "2", "3", "4", "5"])
         
         if choice == "1":
             new_coeff = Prompt.ask("Enter new Extrusion Coefficient", default=str(EXTRUSION_COEFFICIENT))
@@ -119,6 +134,8 @@ def settings_menu():
         elif choice == "3":
             COORDINATE_MODE = "G91" if COORDINATE_MODE == "G90" else "G90"
         elif choice == "4":
+            HIGH_PRECISION_JOG = not HIGH_PRECISION_JOG
+        elif choice == "5":
             break
 
 def connect_to_printer():
@@ -146,7 +163,6 @@ def connect_to_printer():
     try:
         with console.status(f"[bold green]Connecting to {selected_port} at {BAUD_RATE} baud...", spinner="dots"):
             printer_conn = serial.Serial(selected_port, BAUD_RATE, timeout=2)
-            # Wake up printer
             printer_conn.write(b"\r\n\r\n")
             time.sleep(2)
             printer_conn.flushInput()
@@ -156,6 +172,134 @@ def connect_to_printer():
         console.print(f"[bold red]Failed to connect: {e}[/bold red]")
         printer_conn = None
         time.sleep(2)
+
+def interactive_jog_menu():
+    global printer_conn, HIGH_PRECISION_JOG
+    
+    if not printer_conn:
+        console.print("[bold red]Printer not connected! Please connect first.[/bold red]")
+        time.sleep(1.5)
+        return
+        
+    console.clear()
+    display_header()
+    
+    mode_str = "[bold green]HIGH (Instant Stop, Choppy)[/bold green]" if HIGH_PRECISION_JOG else "[bold yellow]LOW (Smooth Glide, Slight Coast)[/bold yellow]"
+    
+    console.print(Panel(
+        f"[bold cyan]Interactive Jog Control[/bold cyan]\n"
+        f"Precision Mode: {mode_str}\n\n"
+        f"Hold keys to jog the printer smoothly. Commands are sent at F{JOG_SPEED_MM_MIN} in {JOG_DISTANCE}mm chunks.\n"
+        "You can press multiple keys at once for diagonal movement!\n\n"
+        " [bold yellow]W[/bold yellow] : +Y    [bold yellow]S[/bold yellow] : -Y\n"
+        " [bold yellow]A[/bold yellow] : -X    [bold yellow]D[/bold yellow] : +X\n"
+        " [bold yellow]R[/bold yellow] : +Z    [bold yellow]F[/bold yellow] : -Z\n"
+        " [bold yellow]T[/bold yellow] : -B    [bold yellow]G[/bold yellow] : +B\n\n"
+        "Press [bold magenta]'p'[/bold magenta] to swap between High and Low Precision instantly.\n"
+        "Press [bold red]'q'[/bold red] to return to the main menu.", 
+        border_style="cyan"
+    ))
+    
+    # Set to relative mode for jogging
+    printer_conn.write(b"G91\n")
+    
+    # --- TERMINAL BLINDFOLDING ---
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    new_settings = termios.tcgetattr(fd)
+    new_settings[3] = new_settings[3] & ~termios.ECHO & ~termios.ICANON
+    
+    active_keys = set()
+    exit_flag = False
+    toggle_requested = False
+
+    def on_press(key):
+        nonlocal exit_flag, toggle_requested
+        global HIGH_PRECISION_JOG
+        try:
+            char = key.char.lower()
+            if char == 'q':
+                exit_flag = True
+                return False 
+            elif char == 'p':
+                HIGH_PRECISION_JOG = not HIGH_PRECISION_JOG
+                toggle_requested = True
+                exit_flag = True
+                return False
+            active_keys.add(char)
+        except AttributeError:
+            pass
+
+    def on_release(key):
+        try:
+            char = key.char.lower()
+            active_keys.discard(char)
+        except AttributeError:
+            pass
+
+    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+    listener.start()
+    
+    try:
+        termios.tcsetattr(fd, termios.TCSANOW, new_settings)
+        
+        in_flight_commands = 0
+        
+        while not exit_flag:
+            while printer_conn.in_waiting > 0:
+                try:
+                    resp = printer_conn.readline().decode('utf-8').strip()
+                    if resp == 'ok' or resp.startswith('ok'):
+                        in_flight_commands = max(0, in_flight_commands - 1)
+                except serial.SerialException:
+                    pass
+
+            # High Precision allows 0 buffered commands (must finish M400 physically)
+            # Low Precision allows 1 buffered command (sliding window for blending)
+            limit = 0 if HIGH_PRECISION_JOG else 1
+            
+            if in_flight_commands <= limit and active_keys:
+                dx, dy, dz, de = 0.0, 0.0, 0.0, 0.0
+                
+                # W and S swapped based on your request
+                if 'w' in active_keys: dy += JOG_DISTANCE
+                if 's' in active_keys: dy -= JOG_DISTANCE
+                if 'a' in active_keys: dx -= JOG_DISTANCE
+                if 'd' in active_keys: dx += JOG_DISTANCE
+                if 'r' in active_keys: dz += JOG_DISTANCE
+                if 'f' in active_keys: dz -= JOG_DISTANCE
+                if 't' in active_keys: de -= JOG_DISTANCE
+                if 'g' in active_keys: de += JOG_DISTANCE
+                
+                if dx != 0 or dy != 0 or dz != 0 or de != 0:
+                    cmd = "G1"
+                    if dx != 0: cmd += f" X{dx:.2f}"
+                    if dy != 0: cmd += f" Y{dy:.2f}"
+                    if dz != 0: cmd += f" Z{dz:.2f}"
+                    if de != 0: cmd += f" {EXTRUSION_AXIS}{de:.2f}"
+                    cmd += f" F{JOG_SPEED_MM_MIN}\n"
+                    
+                    if HIGH_PRECISION_JOG:
+                        full_cmd = cmd + "M400\n"
+                        printer_conn.write(full_cmd.encode('utf-8'))
+                        in_flight_commands += 2
+                    else:
+                        printer_conn.write(cmd.encode('utf-8'))
+                        in_flight_commands += 1
+                else:
+                    time.sleep(0.005) 
+            else:
+                time.sleep(0.005) 
+    finally:
+        listener.stop()
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        termios.tcflush(fd, termios.TCIFLUSH)
+        
+    printer_conn.write(b"G90\n")
+    
+    if toggle_requested:
+        return "reload"
+    return "quit"
 
 def manual_control_menu():
     global printer_conn
@@ -184,19 +328,16 @@ def manual_control_menu():
             continue
             
         try:
-            printer_conn.write((cmd + '\n').encode('utf-8'))
+            printer_conn.write((cmd.upper() + '\n').encode('utf-8'))
             
-            # Read response from the printer
             response_lines = []
             while True:
                 response = printer_conn.readline().decode('utf-8').strip()
                 if response:
                     response_lines.append(response)
-                    # Break when the printer confirms it has processed the command
                     if response == 'ok' or response.startswith('ok'):
                         break
                 else:
-                    # Break if readline times out (no response received)
                     break
                     
             for r in response_lines:
@@ -270,7 +411,6 @@ def translate_gcode():
     f_new = open(output_filepath, "w+t")
     f_new.write(COORDINATE_MODE + "\n")
 
-    # --- INJECTED STARTUP SEQUENCE ---
     f_new.write("; --- Center Bed & Clear Dish Sequence ---\n")
     f_new.write("G90 ; Force absolute positioning for setup\n")
     f_new.write("G92 X0 Y0 Z0 ; Zero at confirmed bottom-left corner\n")
@@ -481,7 +621,6 @@ def translate_gcode():
         f_new.write(f"\n; Auto-depressurize syringe\n")
         f_new.write(f"G1 {EXTRUSION_AXIS}{-PRESSURIZE_AMOUNT} F{PRESSURIZE_SPEED}\n")
 
-    # --- INJECTED END OF PRINT SEQUENCE ---
     f_new.write("\n; --- End of Print Sequence ---\n")
     f_new.write("G91 ; Switch to relative positioning\n")
     f_new.write("G1 Z30 F300 ; Lift nozzle 30mm to safely clear the print\n")
@@ -541,14 +680,8 @@ def load_file_menu():
     time.sleep(1)
 
 def check_for_pause(progress):
-    """
-    Checks if there is keyboard input waiting. 
-    If there is, pauses the progress bar, clears the input, and asks what to do.
-    Returns True if the print should be STOPPED, False if it should RESUME.
-    """
-    # select.select on sys.stdin works great for Mac to non-blockingly check for input
     if sys.stdin in select.select([sys.stdin], [], [], 0.0)[0]:
-        sys.stdin.readline() # Consume whatever key was pressed
+        sys.stdin.readline() 
         
         progress.stop()
         console.print("\n[bold yellow]⚠️  PRINT PAUSED[/bold yellow]")
@@ -562,18 +695,17 @@ def check_for_pause(progress):
         if action == 's':
             console.print("[bold red]Cancelling print and parking bed...[/bold red]")
             try:
-                # Lift nozzle and park so it doesn't melt the dish
                 printer_conn.write(b"G91\n")
                 printer_conn.write(b"G1 Z30 F300\n")
                 printer_conn.write(b"G90\n")
                 printer_conn.write(b"G1 X-50 Y-50 F800\n")
             except Exception as e:
                 console.print(f"[dim]Failed to send park command: {e}[/dim]")
-            return True # Stop the print loop
+            return True 
         else:
             console.print("[bold green]Resuming print...[/bold green]")
             progress.start()
-            return False # Resume the print loop
+            return False 
             
     return False
 
@@ -590,7 +722,6 @@ def print_file():
         time.sleep(1)
         return
 
-    # User confirmation for bed position before printing
     console.print()
     console.print(Panel("[bold yellow]ACTION REQUIRED: Please move the bed to the far bottom left corner before continuing.[/bold yellow]", border_style="yellow"))
     ready = Prompt.ask("Is the bed in the bottom left position?", choices=["y", "n"], default="y")
@@ -628,7 +759,6 @@ def print_file():
         print_aborted = False
         
         while i < len(lines):
-            # Check for pause BEFORE sending the line
             if check_for_pause(progress):
                 print_aborted = True
                 break
@@ -644,15 +774,12 @@ def print_file():
             command = stripped.split(';')[0].strip()
             
             if command:
-                # Only send the command if we haven't already sent it for this index
                 if not command_sent:
                     printer_conn.write((command + '\n').encode('utf-8'))
                     command_sent = True
                 
-                # Wait non-blockingly for 'ok'
                 waiting_for_ok = True
                 while waiting_for_ok:
-                    # Check for pause DURING the wait for the printer
                     if check_for_pause(progress):
                         print_aborted = True
                         break
@@ -666,7 +793,6 @@ def print_file():
                             console.print("[bold red]Serial connection lost during print![/bold red]")
                             return
                     
-                    # Small sleep to keep CPU usage low while waiting
                     time.sleep(0.01)
                     
             if print_aborted:
@@ -687,22 +813,18 @@ def main():
         console.clear()
         display_header()
         
-        # Connection Status
         conn_status = f"[bold green]Connected ({printer_conn.port})[/bold green]" if printer_conn else "[bold red]Not Connected[/bold red]"
         console.print(f"Printer Status: {conn_status}")
         
-        # File Status
         file_status = f"[bold cyan]{os.path.basename(loaded_filepath)}[/bold cyan]" if loaded_filepath else "[dim]None[/dim]"
         console.print(f"Loaded File:    {file_status}\n")
 
-        # Render Main Menu
         console.print("[bold yellow]--- Main Menu ---[/bold yellow]")
         console.print("[1] Connect to Printer")
         console.print("[2] Translate G-Code")
         console.print("[3] Load Translated File")
         
-        # Dynamic Menu Options based on state
-        valid_choices = ["1", "2", "3", "6", "7"]
+        valid_choices = ["1", "2", "3", "7", "8"]
         
         if printer_conn and loaded_filepath:
             console.print("[4] [bold green]Print Loaded File[/bold green]")
@@ -711,13 +833,15 @@ def main():
             console.print("[4] [dim]Print Loaded File (Requires Connection & File)[/dim]")
             
         if printer_conn:
-            console.print("[5] [bold cyan]Manual Printer Control[/bold cyan]")
-            valid_choices.append("5")
+            console.print("[5] [bold cyan]Manual G-Code Terminal[/bold cyan]")
+            console.print("[6] [bold cyan]Interactive Jog Control[/bold cyan]")
+            valid_choices.extend(["5", "6"])
         else:
-            console.print("[5] [dim]Manual Printer Control (Requires Connection)[/dim]")
+            console.print("[5] [dim]Manual G-Code Terminal (Requires Connection)[/dim]")
+            console.print("[6] [dim]Interactive Jog Control (Requires Connection)[/dim]")
             
-        console.print("[6] Options / Settings")
-        console.print("[7] Exit\n")
+        console.print("[7] Options / Settings")
+        console.print("[8] Exit\n")
 
         valid_choices.sort()
 
@@ -734,8 +858,13 @@ def main():
         elif choice == "5":
             manual_control_menu()
         elif choice == "6":
-            settings_menu()
+            while True:
+                res = interactive_jog_menu()
+                if res != "reload":
+                    break
         elif choice == "7":
+            settings_menu()
+        elif choice == "8":
             if printer_conn:
                 printer_conn.close()
             console.print("[bold magenta]Goodbye![/bold magenta]")
