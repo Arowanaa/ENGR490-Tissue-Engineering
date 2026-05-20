@@ -1072,6 +1072,99 @@ def update_orca():
         console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
         time.sleep(3)
 
+def endstop_test_menu():
+    """
+    Option 9: Continuously polls M119 and prints which switch is 
+    triggered, labeled by axis. Press 'q' + Enter to exit.
+    """
+    if not printer_conn or not printer_conn.is_open:
+        console.print("[bold red]Printer not connected! Please connect first.[/bold red]")
+        time.sleep(1.5)
+        return
+
+    console.clear()
+    display_header()
+    console.print(Panel(
+        "[bold cyan]Endstop Switch Test[/bold cyan]\n\n"
+        "Polling M119 endstop status continuously.\n"
+        "Manually press each switch to verify it is wired correctly.\n\n"
+        "  [bold yellow]Y motor[/bold yellow] → STOP_1 connector (PG9)  — reported as [bold]y_min[/bold]\n"
+        "  [bold yellow]Z motor[/bold yellow] → STOP_2 connector (PG10) — reported as [bold]z_min[/bold]\n"
+        "  [bold yellow]A motor[/bold yellow] → STOP_3 connector (PG11) — reported as [bold]z2_min[/bold]\n\n"
+        "Type [bold red]'q'[/bold red] and press Enter to return to the main menu.",
+        border_style="cyan"
+    ))
+
+    printer_conn.reset_input_buffer()
+
+    # Map Marlin M119 field names → your axis label
+    SWITCH_LABELS = {
+        "y_min":  "Y motor (STOP_1 / PG9)",
+        "z_min":  "Z motor (STOP_2 / PG10)",
+        "z2_min": "A motor (STOP_3 / PG11)",
+    }
+
+    is_windows = sys.platform == 'win32'
+    if not is_windows:
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        tty.setcbreak(fd)
+
+    try:
+        while True:
+            # Non-blocking check for 'q' keypress
+            char = None
+            if is_windows:
+                if msvcrt.kbhit():
+                    char = msvcrt.getch().decode('utf-8', errors='ignore').lower()
+            else:
+                if select.select([sys.stdin], [], [], 0)[0]:
+                    char = sys.stdin.read(1).lower()
+
+            if char == 'q':
+                break
+
+            # Poll endstop status
+            printer_conn.write(b"M119\n")
+            
+            raw_lines = []
+            start = time.time()
+            while True:
+                if time.time() - start > 3.0:
+                    break
+                if printer_conn.in_waiting > 0:
+                    try:
+                        line = printer_conn.readline().decode('utf-8', errors='ignore').strip().lower()
+                        if line:
+                            raw_lines.append(line)
+                        if 'ok' in line:
+                            break
+                    except Exception:
+                        break
+                time.sleep(0.01)
+
+            # Parse each line for known endstop names
+            any_triggered = False
+            for line in raw_lines:
+                for key, label in SWITCH_LABELS.items():
+                    if key in line:
+                        if 'triggered' in line:
+                            console.print(f"[bold green][{label}][/bold green] [bold white on green] ON [/bold white on green]")
+                            any_triggered = True
+                        # Uncomment below if you also want to see OPEN states:
+                        # elif 'open' in line:
+                        #     console.print(f"[dim][{label}] open[/dim]")
+
+            if not any_triggered:
+                console.print("[dim]No switches triggered — waiting...[/dim]", end="\r")
+
+            time.sleep(0.3)   # Poll ~3x/sec, avoids flooding the serial buffer
+
+    finally:
+        if not is_windows:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            termios.tcflush(fd, termios.TCIFLUSH)
+
 def main():
     while True:
         console.clear()
@@ -1105,17 +1198,19 @@ def main():
             console.print("[5] [bold cyan]Manual G-Code Terminal[/bold cyan]")
             jog_label = "[bold cyan]Adjust Printer[/bold cyan]" if PYNPUT_AVAILABLE else "[dim]Adjust Printer (unavailable headless)[/dim]"
             console.print(f"[6] {jog_label}")
-            valid_choices.extend(["5", "6"])
+            console.print("[9] [bold cyan]Endstop Switch Test[/bold cyan]")  # ← moved inside printer_conn block
+            valid_choices.extend(["5", "6", "9"])                            # ← 9 added here
         else:
             console.print("[5] [dim]Manual G-Code Terminal (Requires Connection)[/dim]")
             console.print("[6] [dim]Interactive Jog Control (Requires Connection)[/dim]")
+            console.print("[9] [dim]Endstop Switch Test (Requires Connection)[/dim]")
             
         console.print("[7] Options / Settings")
         console.print("[8] Update ORCA from GitHub")
-        console.print("[9] Exit\n")
+        console.print("[10] Exit\n")
+        valid_choices.append("10")
 
         valid_choices = sorted(set(valid_choices))
-
         choice = Prompt.ask("[bold yellow]Choose an option[/bold yellow]", choices=valid_choices)
 
         if choice == "0":
@@ -1140,6 +1235,8 @@ def main():
         elif choice == "8":
             update_orca()
         elif choice == "9":
+            endstop_test_menu()          # ← correct dispatch
+        elif choice == "10":             # ← exit is now 10
             if printer_conn:
                 try:
                     printer_conn.close()
