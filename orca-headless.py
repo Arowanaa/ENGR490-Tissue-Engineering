@@ -1198,45 +1198,45 @@ def main():
             console.print("[5] [bold cyan]Manual G-Code Terminal[/bold cyan]")
             jog_label = "[bold cyan]Adjust Printer[/bold cyan]" if PYNPUT_AVAILABLE else "[dim]Adjust Printer (unavailable headless)[/dim]"
             console.print(f"[6] {jog_label}")
-            console.print("[9] [bold cyan]Endstop Switch Test[/bold cyan]")  # ← moved inside printer_conn block
-            valid_choices.extend(["5", "6", "9"])                            # ← 9 added here
+            console.print("[7] [bold cyan]Endstop Switch Test[/bold cyan]")  # ← moved inside printer_conn block
+            valid_choices.extend(["5", "6", "7"])                            # ← 9 added here
         else:
             console.print("[5] [dim]Manual G-Code Terminal (Requires Connection)[/dim]")
             console.print("[6] [dim]Interactive Jog Control (Requires Connection)[/dim]")
-            console.print("[9] [dim]Endstop Switch Test (Requires Connection)[/dim]")
+            console.print("[7] [dim]Endstop Switch Test (Requires Connection)[/dim]")
             
-        console.print("[7] Options / Settings")
-        console.print("[8] Update ORCA from GitHub")
+        console.print("[8] Options / Settings")
+        console.print("[9] Update ORCA from GitHub")
         console.print("[10] Exit\n")
         valid_choices.append("10")
 
         valid_choices = sorted(set(valid_choices))
         choice = Prompt.ask("[bold yellow]Choose an option[/bold yellow]", choices=valid_choices)
 
-        if choice == "0":
+        if choice == "0":           # reset printer
             reset_printer_board()
-        elif choice == "1":
+        elif choice == "1":         # connect printer
             connect_to_printer()
-        elif choice == "2":
+        elif choice == "2":         # translate G-code 
             translate_gcode()
-        elif choice == "3":
+        elif choice == "3":         # load file 
             load_file_menu()
-        elif choice == "4":
+        elif choice == "4":         # print file 
             print_file()
-        elif choice == "5":
+        elif choice == "5":         # manual G-code terminal
             manual_control_menu()
-        elif choice == "6":
+        elif choice == "6":         # jog control
             while True:
                 res = interactive_jog_menu()
                 if res != "reload":
                     break
-        elif choice == "7":
-            settings_menu()
-        elif choice == "8":
+        elif choice == "7":         # endstop test 
+            endstop_test_menu() 
+        elif choice == "8":         # options / settings
+            settings_menu()   
+        elif choice == "9":         # update orca code 
             update_orca()
-        elif choice == "9":
-            endstop_test_menu()          # ← correct dispatch
-        elif choice == "10":             # ← exit is now 10
+        elif choice == "10":         # exit        
             if printer_conn:
                 try:
                     printer_conn.close()
