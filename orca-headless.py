@@ -1074,7 +1074,7 @@ def update_orca():
 
 def endstop_test_menu():
     """
-    Option 9: Continuously polls M119 and prints which switch is 
+    Option 7: Continuously polls M119 and prints which switch is 
     triggered, labeled by axis. Press 'q' + Enter to exit.
     """
     if not printer_conn or not printer_conn.is_open:
@@ -1108,7 +1108,10 @@ def endstop_test_menu():
     if not is_windows:
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
-        tty.setcbreak(fd)
+        try:
+            tty.setcbreak(fd)
+        except Exception:
+            pass
 
     try:
         while True:
@@ -1161,9 +1164,13 @@ def endstop_test_menu():
             time.sleep(0.3)   # Poll ~3x/sec, avoids flooding the serial buffer
 
     finally:
-        if not is_windows:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-            termios.tcflush(fd, termios.TCIFLUSH)
+       if not is_windows:
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                termios.tcflush(fd, termios.TCIFLUSH)
+            except Exception:
+                pass
+            
 
 def main():
     while True:
