@@ -1,17 +1,23 @@
-echo “ssh /n”
-# sshd 
-echo “PasswordAuthentication no
-PermitRootLogin no
-AllowUsers [change user before running]
-Port 2244
-MaxAuthTries 3” >> /etc/ssh/sshd_config
+echo "[2/5] Configuring SSH..."
+apt install -y openssh-server
+systemctl enable ssh
+systemctl start ssh
 
-# ssh
-echo “Host printer
-    HostName [change to Pi IP]
-    User your_username              
-    Port 2244                       
-    IdentityFile ~/.ssh/id_ed25519  # Path to your private SSH key
-    IdentitiesOnly yes              # Only use the key specified above
-    ServerAliveInterval 60          # Keeps the connection from "hanging"
-    ServerAliveCountMax 3” >> /etc/ssh/ssh_config
+# Harden sshd_config
+tee /etc/ssh/sshd_config.d/99-hardening.conf > /dev/null << SSH
+Port 2244
+PermitRootLogin no
+AllowUsers pi
+PasswordAuthentication yes
+PermitEmptyPasswords no
+MaxAuthTries 3
+LoginGraceTime 30
+X11Forwarding no
+SSH
+
+# Validate before reloading — avoids locking yourself out
+sshd -t && systemctl reload sshd || {
+    echo "ERROR: sshd config invalid, reverting"
+    rm /etc/ssh/sshd_config.d/99-hardening.conf
+    exit 1
+}

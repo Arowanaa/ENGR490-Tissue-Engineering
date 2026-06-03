@@ -4,10 +4,16 @@ import platform
 import subprocess
 import time
 import sys
-import select
-import tty
-import termios
+import re
 from datetime import datetime
+
+# Platform-specific imports for terminal control
+if sys.platform == 'win32':
+    import msvcrt
+else:
+    import select
+    import tty
+    import termios
 
 # Import Rich
 try:
@@ -18,7 +24,7 @@ try:
     from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
 except ImportError:
     print("Please install the 'rich' library: pip install rich")
-    exit()
+    sys.exit()
 
 # Import pyserial for printer communication
 try:
@@ -26,15 +32,20 @@ try:
     import serial.tools.list_ports
 except ImportError:
     print("Please install the 'pyserial' library: pip install pyserial")
-    exit()
+    sys.exit()
 
 # Import pynput for raw keyboard hardware monitoring
+# BUG FIX #5: pynput crashes on headless Pi (no display/TTY with X or accessibility).
+# Guard the import and set a flag so jog mode can degrade gracefully.
+PYNPUT_AVAILABLE = False
 try:
     from pynput import keyboard
+    PYNPUT_AVAILABLE = True
 except ImportError:
-    print("Please install the 'pynput' library: pip install pynput")
-    print("(Note for Mac users: You may need to grant your terminal Accessibility permissions in System Settings)")
-    exit()
+    pass  # Handled at runtime in interactive_jog_menu
+except Exception:
+    # On headless Linux pynput may raise Xlib/uinput errors at import time
+    pass
 
 # Initialize the Rich Console
 console = Console()
@@ -46,7 +57,7 @@ COORDINATE_MODE = "G90"         # 'G90' for Absolute, 'G91' for Relative
 EXTRUSION_AXIS = "B"            # The target axis for extrusion ('B' or 'C')
 Z_SYRINGE_DIAMETER = 4.9        # Inner diameter in mm (4.9 for 1mL BD syringe)
 A_SYRINGE_DIAMETER = 4.9
-Z_NOZZLE_DIAMETER = 2         # Nozzle diameter in mm
+Z_NOZZLE_DIAMETER = 2           # Nozzle diameter in mm
 A_NOZZLE_DIAMETER = 0.2
 EXTRUSION_COEFFICIENT = 0.33    # Scaling factor for extrusion
 
@@ -60,6 +71,9 @@ JOG_DISTANCE = 0.2              # Distance in mm per keystroke tick
 JOG_SPEED_MM_MIN = 300          # The F-value for jogging speed
 HIGH_PRECISION_JOG = True       # Start in high precision mode
 
+# Bed Origin Settings
+START_FROM_CENTER = False       # If True, expects bed to start in center, skipping init travel
+
 # Serial Connection Settings
 BAUD_RATE = 115200
 # ==========================================
@@ -69,32 +83,19 @@ printer_conn = None
 loaded_filepath = None
 
 def display_header():
-    # Show the awesome ASCII splash art on the main menus
     splash = r"""
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣸⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣿⣿⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⢀⣀⣄⡀⠰⠴⣶⣶⣤⣤⡀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣿⣿⣿⣿⣿⡇⠀⢀⣤⣶⣻⣾⣿⣴⣴⣾⣿⣿⣿⣿⣿⣿⡆
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⣿⣿⣿⣿⣿⣿⣥⣾⠿⢿⣿⣽⣾⣿⣿⣿⣿⣿⣿⣿⠿⢿⡿⣧
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⠟⠉⠀⠀⠀⣸⣿⣿⣿⣿⡿⠟⠛⠋⠉⠐⠊⠡⢹⢚    ____  _____  _____         
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣠⣤⣤⡴⠂⠐⠒⢨⣿⣿⣿⣿⣿⣿⣤⣆⣤⣠⣴⣾⣿⣷⡿⠋⠁⠀⠀⠀⠀⠀⠐⣁⠎⠀⡘  / __ \|  __ \ / ____|   /\   
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢐⣠⣤⣶⣾⣿⣿⣿⣿⣿⣆⡀⡀⣀⣨⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡜⠀⠀⡐⠀ | |  | | |__) | |       /  \   
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠛⠁⠀⠀⠀⠀⠀⠀⠀⠄⠀⠄⠀⠀⠀⠀⠀⠂⠀⠀ | |  | |  _  /| |      / /\ \  
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣴⡶⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡠⠂⠀⠀⠀ | |__| | | \ \| |____ / ____ \ 
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣵⣿⣿⣅⠀⠀⠀⠀⢈⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠂⠀⠀⠀⠀⠀  \____/|_|  \_\\_____/_/    \_\
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣶⣦⣌⠁⠀⠉⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⡞⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠜⠁⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.12[/cyan]
-⢠⠖⠋⠉⠀⢀⠀⠂⣌⢇⠀⣰⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⣄⠀⡀⠀⠀⢀⣽⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⣐⠰⠂⠀⠀⠀⠀⡀⣠⣴⣾⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
-⠛⠓⠒⠲⢤⣀⣐⣤⡞⣸⢊⠥⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠀⢀⣤⣿⣿⣿⣿⣿⣿⣿⡿⠟⠋⢄⣀⠀⠠⠤⠴⠂⠈⠁⢰⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⢿⠃⠀⠀⠸⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠉⠉⠉⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢖⣦⣀⢻⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻⣿⣿⣿⣿⠃⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠛⠾⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⣿⡿⠛⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀
+ ____  _____  _____         
+/ __ \|  __ \/ ____|   /\   
+| |  | | |__) | |       /  \  
+| |  | |  _  /| |      / /\ \ 
+| |__| | | \ \| |____ / ____ \
+\____/|_|  \_\\_____/_/    \_\
 """
-    splash = splash.replace('\u2800', ' ')
-    console.print(splash, style="bold white")
+    console.print(splash, style="bold cyan")
+    console.print("                    [cyan]v1.0.15[/cyan]\n")
 
 def settings_menu():
-    global COORDINATE_MODE, EXTRUSION_COEFFICIENT, DO_AUTO_PRESSURIZE, HIGH_PRECISION_JOG
+    global COORDINATE_MODE, EXTRUSION_COEFFICIENT, DO_AUTO_PRESSURIZE, HIGH_PRECISION_JOG, START_FROM_CENTER
     
     while True:
         console.clear()
@@ -110,7 +111,7 @@ def settings_menu():
         config_table.add_row("Z Syringe (mm)", str(Z_SYRINGE_DIAMETER), "A Syringe (mm)", str(A_SYRINGE_DIAMETER))
         config_table.add_row("Z Nozzle (mm)", str(Z_NOZZLE_DIAMETER), "A Nozzle (mm)", str(A_NOZZLE_DIAMETER))
         config_table.add_row("Extrusion Coeff.", str(EXTRUSION_COEFFICIENT), "Auto-Pressurize", "[green]ON[/green]" if DO_AUTO_PRESSURIZE else "[red]OFF[/red]")
-        config_table.add_row("Jog Precision", "[green]HIGH[/green]" if HIGH_PRECISION_JOG else "[yellow]LOW[/yellow]", "", "")
+        config_table.add_row("Jog Precision", "[green]HIGH[/green]" if HIGH_PRECISION_JOG else "[yellow]LOW[/yellow]", "Start from Center", "[green]ON[/green]" if START_FROM_CENTER else "[red]OFF[/red]")
         
         console.print(config_table)
         console.print("\n[bold yellow]--- Options Menu ---[/bold yellow]")
@@ -118,9 +119,10 @@ def settings_menu():
         console.print("[2] Toggle Auto-Pressurize")
         console.print("[3] Toggle Coordinate Mode (G90/G91)")
         console.print("[4] Toggle Jog Precision Mode")
-        console.print("[5] Return to Main Menu\n")
+        console.print("[5] Toggle Start from Center")
+        console.print("[6] Return to Main Menu\n")
         
-        choice = Prompt.ask("[bold yellow]Choose an option[/bold yellow]", choices=["1", "2", "3", "4", "5"])
+        choice = Prompt.ask("[bold yellow]Choose an option[/bold yellow]", choices=["1", "2", "3", "4", "5", "6"])
         
         if choice == "1":
             new_coeff = Prompt.ask("Enter new Extrusion Coefficient", default=str(EXTRUSION_COEFFICIENT))
@@ -136,11 +138,19 @@ def settings_menu():
         elif choice == "4":
             HIGH_PRECISION_JOG = not HIGH_PRECISION_JOG
         elif choice == "5":
+            START_FROM_CENTER = not START_FROM_CENTER
+        elif choice == "6":
             break
 
 def connect_to_printer():
     global printer_conn
     
+    if printer_conn and printer_conn.is_open:
+        try:
+            printer_conn.close()
+        except Exception:
+            pass
+            
     ports = serial.tools.list_ports.comports()
     if not ports:
         console.print("[bold red]No serial ports found. Make sure the printer is plugged in.[/bold red]")
@@ -163,9 +173,21 @@ def connect_to_printer():
     try:
         with console.status(f"[bold green]Connecting to {selected_port} at {BAUD_RATE} baud...", spinner="dots"):
             printer_conn = serial.Serial(selected_port, BAUD_RATE, timeout=2)
-            printer_conn.write(b"\r\n\r\n")
+            
+            # HARDWARE RESET: Toggling DTR tells the 3D printer board to reset its serial state
+            printer_conn.setDTR(False)
+            time.sleep(0.05)
+            printer_conn.setDTR(True)
+            
+            # Clear any garbage leftover in the OS buffers
+            printer_conn.reset_input_buffer()
+            printer_conn.reset_output_buffer()
+            
+            # Send wake up pings
+            printer_conn.write(b"\n\n")
             time.sleep(2)
-            printer_conn.flushInput()
+            printer_conn.reset_input_buffer()
+            
             console.print(f"[bold green]Successfully connected to {selected_port}![/bold green]")
             time.sleep(1)
     except Exception as e:
@@ -173,13 +195,55 @@ def connect_to_printer():
         printer_conn = None
         time.sleep(2)
 
+def reset_printer_board():
+    """Forces a hard reboot and serial flush for the printer to clear hangs."""
+    global printer_conn
+    
+    if not printer_conn:
+        console.print("[bold red]Printer not connected! Cannot send reset signal.[/bold red]")
+        time.sleep(1.5)
+        return
+        
+    console.print("[bold yellow]Sending reset signals to printer board...[/bold yellow]")
+    try:
+        printer_conn.write(b"M112\n")
+        time.sleep(0.1)
+        printer_conn.write(b"M999\n")
+        
+        printer_conn.setDTR(False)
+        time.sleep(0.5)
+        printer_conn.setDTR(True)
+        
+        printer_conn.reset_input_buffer()
+        printer_conn.reset_output_buffer()
+        
+        console.print("[bold green]Printer board reset successfully! Give it a few seconds to boot up.[/bold green]")
+        time.sleep(2)
+    except Exception as e:
+        console.print(f"[bold red]Failed to reset: {e}[/bold red]")
+        console.print("[yellow]Tip: If the port is completely locked, physically unplug the USB cable and plug it back in.[/yellow]")
+        time.sleep(3)
+
 def interactive_jog_menu():
     global printer_conn, HIGH_PRECISION_JOG
+
+    # BUG FIX #5: pynput is unavailable on headless Pi — fail gracefully
+    if not PYNPUT_AVAILABLE:
+        console.print(Panel(
+            "[bold red]Interactive jog is unavailable.[/bold red]\n\n"
+            "pynput could not be loaded (likely running headless with no display).\n"
+            "Use the [bold cyan]Manual G-Code Terminal[/bold cyan] (option 5) to move axes instead.\n\n"
+            "Example: [bold green]G91[/bold green] then [bold green]G1 X5 F300[/bold green]",
+            border_style="red",
+            title="Jog Unavailable"
+        ))
+        time.sleep(3)
+        return "quit"
     
     if not printer_conn:
         console.print("[bold red]Printer not connected! Please connect first.[/bold red]")
         time.sleep(1.5)
-        return
+        return "quit"
         
     console.clear()
     display_header()
@@ -200,14 +264,16 @@ def interactive_jog_menu():
         border_style="cyan"
     ))
     
-    # Set to relative mode for jogging
+    printer_conn.reset_input_buffer()
     printer_conn.write(b"G91\n")
     
-    # --- TERMINAL BLINDFOLDING ---
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-    new_settings = termios.tcgetattr(fd)
-    new_settings[3] = new_settings[3] & ~termios.ECHO & ~termios.ICANON
+    is_windows = sys.platform == 'win32'
+    if not is_windows:
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        new_settings = termios.tcgetattr(fd)
+        new_settings[3] = new_settings[3] & ~termios.ECHO & ~termios.ICANON
+        termios.tcsetattr(fd, termios.TCSANOW, new_settings)
     
     active_keys = set()
     exit_flag = False
@@ -241,27 +307,31 @@ def interactive_jog_menu():
     listener.start()
     
     try:
-        termios.tcsetattr(fd, termios.TCSANOW, new_settings)
-        
         in_flight_commands = 0
+        last_command_time = time.time()
         
         while not exit_flag:
+            if is_windows:
+                while msvcrt.kbhit():
+                    msvcrt.getch()
+                    
+            if in_flight_commands > 0 and (time.time() - last_command_time) > 0.5:
+                in_flight_commands = 0
+                printer_conn.reset_input_buffer()
+
             while printer_conn.in_waiting > 0:
                 try:
-                    resp = printer_conn.readline().decode('utf-8').strip()
-                    if resp == 'ok' or resp.startswith('ok'):
+                    resp = printer_conn.readline().decode('utf-8', errors='ignore').strip()
+                    if 'ok' in resp.lower():
                         in_flight_commands = max(0, in_flight_commands - 1)
-                except serial.SerialException:
+                except Exception:
                     pass
 
-            # High Precision allows 0 buffered commands (must finish M400 physically)
-            # Low Precision allows 1 buffered command (sliding window for blending)
             limit = 0 if HIGH_PRECISION_JOG else 1
             
             if in_flight_commands <= limit and active_keys:
                 dx, dy, dz, de = 0.0, 0.0, 0.0, 0.0
                 
-                # W and S swapped based on your request
                 if 'w' in active_keys: dy += JOG_DISTANCE
                 if 's' in active_keys: dy -= JOG_DISTANCE
                 if 'a' in active_keys: dx -= JOG_DISTANCE
@@ -286,14 +356,17 @@ def interactive_jog_menu():
                     else:
                         printer_conn.write(cmd.encode('utf-8'))
                         in_flight_commands += 1
+                        
+                    last_command_time = time.time()
                 else:
                     time.sleep(0.005) 
             else:
                 time.sleep(0.005) 
     finally:
         listener.stop()
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        termios.tcflush(fd, termios.TCIFLUSH)
+        if not is_windows:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            termios.tcflush(fd, termios.TCIFLUSH)
         
     printer_conn.write(b"G90\n")
     
@@ -314,10 +387,14 @@ def manual_control_menu():
     console.print(Panel(
         "[bold cyan]Manual G-Code Terminal[/bold cyan]\n"
         "Type your G-Code commands and press Enter.\n"
-        "Movement commands (G0/G1) default to F300 if no speed is specified.\n"
+        "Movement commands (G0/G1) default to F300 if no speed is specified.\n\n"
+        "[bold yellow]TIP:[/bold yellow] If movements like 'G1 X0.2' aren't doing anything, the printer is likely in Absolute Mode.\n"
+        "Send [bold green]G91[/bold green] to switch to Relative Mode, then try your move again.\n\n"
         "Type [bold yellow]'q'[/bold yellow] or [bold yellow]'quit'[/bold yellow] to return to the main menu.", 
         border_style="cyan"
     ))
+    
+    printer_conn.reset_input_buffer()
     
     while True:
         cmd = Prompt.ask("[bold green]>[/bold green]")
@@ -328,24 +405,33 @@ def manual_control_menu():
         if not cmd.strip():
             continue
             
-        cmd_upper = cmd.upper().strip()
+        # Replace macOS smart dashes and unicode minus signs with a standard ASCII hyphen
+        cmd_clean = re.sub(r'[–—−]', '-', cmd)
         
-        # Auto-append F300 for G0/G1 if no F parameter is specified
-        parts = cmd_upper.split()
-        if parts and (parts[0] == "G0" or parts[0] == "G1"):
-            has_f = any(part.startswith("F") for part in parts)
-            if not has_f:
+        # Remove accidental spaces between axis letters and their values (e.g., "X -5" -> "X-5")
+        cmd_clean = re.sub(r'([A-Z])\s+([-\.0-9])', r'\1\2', cmd_clean, flags=re.IGNORECASE)
+        
+        cmd_upper = cmd_clean.upper().strip()
+        
+        if cmd_upper.startswith("G0") or cmd_upper.startswith("G1"):
+            if "F" not in cmd_upper:
                 cmd_upper += " F300"
                 
         try:
-            printer_conn.write((cmd_upper + '\n').encode('utf-8'))
+            printer_conn.write((cmd_upper + '\n').encode('ascii', errors='ignore'))
             
             response_lines = []
+            start_wait = time.time()
+            
             while True:
-                response = printer_conn.readline().decode('utf-8').strip()
+                if time.time() - start_wait > 5.0:
+                    console.print("[dim yellow]Warning: Printer didn't respond with 'ok' within 5 seconds.[/dim yellow]")
+                    break
+                    
+                response = printer_conn.readline().decode('utf-8', errors='ignore').strip()
                 if response:
                     response_lines.append(response)
-                    if response == 'ok' or response.startswith('ok'):
+                    if 'ok' in response.lower():
                         break
                 else:
                     break
@@ -411,23 +497,31 @@ def translate_gcode():
         time.sleep(2)
         return
 
-    coordinate_type = 0 if 'G90' in COORDINATE_MODE else 1
+    # BUG FIX #1 (coordinate_type): G90=Absolute=0, G91=Relative=1 — was already correct,
+    # but arc length in relative mode was using x_val/y_val instead of x_rel/y_rel (fixed below)
+    coordinate_type = 0 if COORDINATE_MODE == "G90" else 1
     extrusion_coefficient = EXTRUSION_COEFFICIENT
     extruder = 0
     netExtrude = 0
+    # Track net extrusion per extruder for accurate volume reporting
+    netExtrude_A = 0
 
     console.print(f"\n[bold green]Translating[/bold green] [cyan]'{selected_file}'[/cyan] -> [cyan]'{output_filename}'[/cyan]...\n")
 
     f_new = open(output_filepath, "w+t")
     f_new.write(COORDINATE_MODE + "\n")
 
-    f_new.write("; --- Center Bed & Clear Dish Sequence ---\n")
+    f_new.write("; --- Initialization Sequence ---\n")
     f_new.write("G90 ; Force absolute positioning for setup\n")
-    f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero at confirmed bottom-left corner and zero extrusion axis\n")
-    f_new.write("G1 Z30 F300 ; Z-hop up 30mm to clear dish walls\n")
-    f_new.write("G1 X50 Y50 F300 ; Move to the center\n")
-    f_new.write("G1 Z0 F300 ; Drop back down to original height before printing\n")
-    f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Re-zero all axes at the center\n")
+    
+    if START_FROM_CENTER:
+        f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero all axes at the current center position\n")
+    else:
+        f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero at confirmed bottom-left corner\n")
+        f_new.write("G1 Z30 F300 ; Z-hop up 30mm to clear dish walls\n")
+        f_new.write("G1 X50 Y50 F300 ; Move to the center\n")
+        f_new.write("G1 Z0 F300 ; Drop back down to original height before printing\n")
+        f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Re-zero all axes at the center\n")
     
     if COORDINATE_MODE == "G91":
         f_new.write("G91 ; Restore relative positioning\n")
@@ -441,8 +535,8 @@ def translate_gcode():
             f_new.write("G90 ; Switch back to absolute positioning\n")
         f_new.write(f"G92 {EXTRUSION_AXIS}0 ; Re-zero the extrusion axis after pressurizing\n\n")
 
-    x1, y1, e1, a1, z1 = 0, 0, 0, 0, 0
-    e1_orig = 0 
+    x1, y1, e1, a1, z1 = 0.0, 0.0, 0.0, 0.0, 0.0
+    e1_orig = 0.0
 
     with Progress(
         SpinnerColumn(spinner_name="monkey"),
@@ -461,22 +555,24 @@ def translate_gcode():
             if stripped_line.startswith('M'):
                 if not (stripped_line.startswith('M106') or stripped_line.startswith('M107')):
                     progress.advance(task)
-                    continue 
+                    continue
 
             if "syringe_diameter" in stripped_line or "nozzle_diameter" in stripped_line or "extrusion_coefficient" in stripped_line:
                 progress.advance(task)
                 continue
 
+            # BUG FIX #6: G92 E0 only resets the extrusion position — NOT X/Y/Z/A.
+            # Original code zeroed all axes on G92 E0 which is wrong.
             if 'G92 E0' in stripped_line or f'G92 {EXTRUSION_AXIS}0' in stripped_line:
-                x1, y1, e1, a1, z1 = 0, 0, 0, 0, 0
-                e1_orig = 0
+                e1 = 0.0
+                e1_orig = 0.0
+                # Do NOT zero x1/y1/z1/a1 here — only the extrusion axis resets
 
             if not stripped_line or stripped_line.startswith(';') or 'G90' in stripped_line or 'G91' in stripped_line or 'G92' in stripped_line or 'G21' in stripped_line or 'G4' in stripped_line:
                 if ('G90' in stripped_line or 'G91' in stripped_line) and "G9" in original_line[:3]:
                     progress.advance(task)
                     continue
                 
-                # Catch G92 E0 and translate E to our EXTRUSION_AXIS
                 if 'G92' in stripped_line and 'E' in stripped_line:
                     f_new.write(original_line.replace('E', EXTRUSION_AXIS))
                 else:
@@ -510,6 +606,8 @@ def translate_gcode():
                 progress.advance(task)
                 continue
 
+            # BUG FIX #4: original dict lookup used `letters[c]` which raises KeyError for
+            # missing keys. Use .get() to safely return None for absent axes.
             letters = {'G': None, 'X': None, 'Y': None, 'Z': None, 'A': None, 'I': None, 'J': None, 'R': None, 'T': None, 'E': None, 'F': None}
             var = False
             for command in stripped_line.split():
@@ -517,88 +615,99 @@ def translate_gcode():
                 if command.endswith(';'):
                     command = command[:-1]
                     var = True
-                if command[0] in letters:
+                if command[0].upper() in letters:
                     try:
-                        letters[command[0]] = float(command[1:])
+                        letters[command[0].upper()] = float(command[1:])
                     except ValueError:
                         pass
                 if var: break
 
-            if not any((letters[c] for c in 'XYZAIJRT' if c in letters and letters[c] is not None)):
+            motion_axes = ['X', 'Y', 'Z', 'A', 'I', 'J', 'R', 'T']
+            if not any(letters.get(c) is not None for c in motion_axes):
                 f_new.write(original_line)
                 progress.advance(task)
                 continue
 
-            g = letters['G']
-            x = letters['X']
-            y = letters['Y']
-            z = letters['Z']
-            a = letters['A']
-            i = letters['I']
-            j = letters['J']
-            r = letters['R']
-            f = letters['F']
+            g = letters.get('G')
+            x = letters.get('X')
+            y = letters.get('Y')
+            z = letters.get('Z')
+            a = letters.get('A')
+            i = letters.get('I')
+            j = letters.get('J')
+            r = letters.get('R')
+            f = letters.get('F')
 
             l = 0
             
-            x_val = x if x is not None else 0
-            y_val = y if y is not None else 0
-            z_val = z if z is not None else 0
-            a_val = a if a is not None else 0
+            x_val = x if x is not None else (x1 if coordinate_type == 0 else 0)
+            y_val = y if y is not None else (y1 if coordinate_type == 0 else 0)
+            z_val = z if z is not None else (z1 if coordinate_type == 0 else 0)
+            a_val = a if a is not None else (a1 if coordinate_type == 0 else 0)
             i_val = i if i is not None else 0
             j_val = j if j is not None else 0
 
-            x_rel = x_val - x1 if x is not None else 0
-            y_rel = y_val - y1 if y is not None else 0
-            z_rel = z_val - z1 if z is not None else 0
-            a_rel = a_val - a1 if a is not None else 0
+            # For absolute mode, relative displacement = new - old
+            # For relative mode, the values ARE the displacement already
+            if coordinate_type == 0:  # G90 Absolute
+                x_rel = (x_val - x1) if x is not None else 0
+                y_rel = (y_val - y1) if y is not None else 0
+                z_rel = (z_val - z1) if z is not None else 0
+                a_rel = (a_val - a1) if a is not None else 0
+            else:  # G91 Relative — values are already displacements
+                x_rel = x if x is not None else 0
+                y_rel = y if y is not None else 0
+                z_rel = z if z is not None else 0
+                a_rel = a if a is not None else 0
 
             if g == 1:
-                if coordinate_type == 1: 
-                    l = math.sqrt(x_val**2 + y_val**2 + a_val**2 + z_val**2)
-                elif coordinate_type == 0: 
-                    l = math.sqrt(x_rel**2 + y_rel**2 + a_rel**2 + z_rel**2)
+                # BUG FIX #2: always use x_rel/y_rel for arc/line length — consistent
+                # regardless of mode since x_rel is computed correctly above for both modes
+                l = math.sqrt(x_rel**2 + y_rel**2 + a_rel**2 + z_rel**2)
             elif g == 2 or g == 3:
                 full_circle = False
                 radius = r
-                if radius is None: radius = math.sqrt(i_val**2 + j_val**2)
-                
-                if coordinate_type == 1: 
-                    if x_val != 0 or y_val != 0 or z_val != 0 or a_val != 0:
-                        d = math.sqrt(x_val**2 + y_val**2 + a_val**2 + z_val**2)
+                if radius is None:
+                    radius = math.sqrt(i_val**2 + j_val**2)
+
+                # BUG FIX #2 (arc): use x_rel/y_rel for both absolute and relative modes
+                if x_rel != 0 or y_rel != 0 or z_rel != 0 or a_rel != 0:
+                    d = math.sqrt(x_rel**2 + y_rel**2 + a_rel**2 + z_rel**2)
+                    if radius > 0:
                         val = max(-1.0, min(1.0, 1 - (d**2 / (2 * radius**2))))
-                        theta = 2*math.pi - math.acos(val)
+                        theta = 2 * math.pi - math.acos(val)
                     else:
-                        theta = 2 * math.pi
-                        full_circle = True
-                elif coordinate_type == 0: 
-                    if x is not None or y is not None or z is not None or a is not None:
-                        d = math.sqrt(x_rel**2 + y_rel**2 + a_rel**2 + z_rel**2)
-                        val = max(-1.0, min(1.0, 1 - (d**2 / (2 * radius**2))))
-                        theta = 2*math.pi - math.acos(val)
-                    else:
-                        theta = 2 * math.pi
-                        full_circle = True
+                        theta = 0
+                else:
+                    theta = 2 * math.pi
+                    full_circle = True
+
                 l = radius * theta
-                if g == 3 and not full_circle: l = 2 * math.pi * radius - l 
+                if g == 3 and not full_circle:
+                    l = 2 * math.pi * radius - l
             
-            original_e = letters['E']
+            original_e = letters.get('E')
             
             if original_e is None:
                 chunk = 0
             else:
-                if coordinate_type == 1: e_change = original_e
-                else: e_change = original_e - e1_orig
+                if coordinate_type == 1:
+                    e_change = original_e
+                else:
+                    e_change = original_e - e1_orig
                 
                 if e_change == 0:
                     chunk = 0
                 else:
                     if l > 0:
-                        if extruder == 0: chunk = (extrusion_coefficient * l * Z_NOZZLE_DIAMETER**2) / (Z_SYRINGE_DIAMETER**2)
-                        else: chunk = (extrusion_coefficient * l * A_NOZZLE_DIAMETER**2) / (A_SYRINGE_DIAMETER**2)
-                        if e_change < 0: chunk = -chunk
+                        if extruder == 0:
+                            chunk = (extrusion_coefficient * l * Z_NOZZLE_DIAMETER**2) / (Z_SYRINGE_DIAMETER**2)
+                        else:
+                            chunk = (extrusion_coefficient * l * A_NOZZLE_DIAMETER**2) / (A_SYRINGE_DIAMETER**2)
+                        if e_change < 0:
+                            chunk = -chunk
                     else:
-                        # Scale pure extrusion moves (like primes and retractions) 
+                        # Scale pure extrusion moves (primes and retractions)
                         FILAMENT_DIAMETER = 1.75
                         if extruder == 0:
                             chunk = e_change * (FILAMENT_DIAMETER**2) / (Z_SYRINGE_DIAMETER**2)
@@ -606,9 +715,15 @@ def translate_gcode():
                             chunk = e_change * (FILAMENT_DIAMETER**2) / (A_SYRINGE_DIAMETER**2)
             
             if original_e is not None:
-                if coordinate_type == 1: e = chunk
-                elif coordinate_type == 0: e = e1 + chunk
-                netExtrude += chunk
+                if coordinate_type == 1:
+                    e = chunk
+                else:
+                    e = e1 + chunk
+                # BUG FIX #3: track per-extruder extrusion separately for correct volume
+                if extruder == 0:
+                    netExtrude += chunk
+                else:
+                    netExtrude_A += chunk
                 e1_orig = original_e
             else:
                 e = None
@@ -629,15 +744,27 @@ def translate_gcode():
             if 'NO E' in original_line:
                 f_new.write(original_line)
                 if original_e is not None:
-                    if coordinate_type == 0: e -= chunk
-                    netExtrude -= chunk
+                    if coordinate_type == 0:
+                        e -= chunk
+                    if extruder == 0:
+                        netExtrude -= chunk
+                    else:
+                        netExtrude_A -= chunk
             else:
                 f_new.write(write_line + "\n")
 
-            x1 = x_val if x is not None else x1
-            y1 = y_val if y is not None else y1
-            z1 = z_val if z is not None else z1
-            a1 = a_val if a is not None else a1
+            # Update tracked positions
+            if coordinate_type == 0:  # Absolute: store new absolute position
+                x1 = x_val if x is not None else x1
+                y1 = y_val if y is not None else y1
+                z1 = z_val if z is not None else z1
+                a1 = a_val if a is not None else a1
+            else:  # Relative: accumulate
+                if x is not None: x1 += x
+                if y is not None: y1 += y
+                if z is not None: z1 += z
+                if a is not None: a1 += a
+
             e1 = e if e is not None else e1
 
             progress.advance(task)
@@ -653,14 +780,26 @@ def translate_gcode():
     f_new.write("G91 ; Switch to relative positioning\n")
     f_new.write("G1 Z30 F300 ; Lift nozzle 30mm to safely clear the print\n")
     f_new.write("G90 ; Switch back to absolute positioning\n")
-    f_new.write("G1 X-50 Y-50 F300 ; Park the bed back at the original bottom-left edge\n")
+    if START_FROM_CENTER:
+        f_new.write("G1 X0 Y0 F300 ; Park the bed back at the center\n")
+    else:
+        f_new.write("G1 X-50 Y-50 F300 ; Park the bed back at the original bottom-left edge\n")
     f_new.write("; -----------------------------\n")
 
     f_new.close()
 
-    netVol = netExtrude * math.pi * (Z_SYRINGE_DIAMETER / 2)**2 / 1000
+    # BUG FIX #3: report volume per extruder using the correct syringe diameter for each
+    netVol_Z = netExtrude * math.pi * (Z_SYRINGE_DIAMETER / 2)**2 / 1000
+    netVol_A = netExtrude_A * math.pi * (A_SYRINGE_DIAMETER / 2)**2 / 1000
     
-    success_text = f"Total Extrusion Distance: [bold yellow]{round(netExtrude, 3)} mm[/bold yellow]\nEstimated Volume: [bold yellow]{round(netVol, 3)} mL[/bold yellow]"
+    success_text = (
+        f"[bold cyan]Extruder B (Z syringe):[/bold cyan]\n"
+        f"  Distance: [bold yellow]{round(netExtrude, 3)} mm[/bold yellow]   "
+        f"Volume: [bold yellow]{round(netVol_Z, 3)} mL[/bold yellow]\n\n"
+        f"[bold cyan]Extruder C (A syringe):[/bold cyan]\n"
+        f"  Distance: [bold yellow]{round(netExtrude_A, 3)} mm[/bold yellow]   "
+        f"Volume: [bold yellow]{round(netVol_A, 3)} mL[/bold yellow]"
+    )
     console.print()
     console.print(Panel(success_text, title="[bold green]Translation Complete[/bold green]", border_style="green", expand=False))
 
@@ -671,47 +810,19 @@ def translate_gcode():
         console.print(f"[bold green]Loaded {output_filename}![/bold green]")
         time.sleep(1)
 
-def load_file_menu():
-    global loaded_filepath
-    out_dir = "translated_gcode"
-
-    os.makedirs(out_dir, exist_ok=True)
-    valid_extensions = ('.gcode', '.txt')
-    files = [f for f in os.listdir(out_dir) if f.lower().endswith(valid_extensions)]
-
-    if not files:
-        console.print(Panel(f"[bold red]No files found in '{out_dir}'. Please translate a file first.[/bold red]"))
-        time.sleep(2)
-        return
-
-    files.sort(key=lambda x: os.path.getmtime(os.path.join(out_dir, x)), reverse=True)
-
-    file_table = Table(show_header=True, header_style="bold green", title="[bold cyan]Translated Files")
-    file_table.add_column("#", justify="right", style="cyan", no_wrap=True)
-    file_table.add_column("Filename", style="magenta")
-    file_table.add_column("Last Modified", justify="right", style="green")
-
-    for i, f in enumerate(files):
-        mtime = os.path.getmtime(os.path.join(out_dir, f))
-        dt_str = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
-        file_table.add_row(str(i + 1), f, dt_str)
-
-    console.print(file_table)
-    console.print(f"[0] Cancel")
-
-    choice = IntPrompt.ask("\n[bold yellow]Select a file to load[/bold yellow]", choices=[str(i) for i in range(len(files) + 1)])
-    if choice == 0: return
-
-    selected_file = files[choice - 1]
-    loaded_filepath = os.path.join(out_dir, selected_file)
-    console.print(f"[bold green]Successfully loaded {selected_file}![/bold green]")
-    time.sleep(1)
-
 def check_for_pause(progress):
-    if sys.stdin in select.select([sys.stdin], [], [], 0.0)[0]:
-        sys.stdin.readline() 
-        
-        # Instantly freeze the printer's current movement using feedrate override
+    pause_requested = False
+    
+    if sys.platform == 'win32':
+        if msvcrt.kbhit():
+            msvcrt.getch()
+            pause_requested = True
+    else:
+        if sys.stdin in select.select([sys.stdin], [], [], 0.0)[0]:
+            sys.stdin.readline()
+            pause_requested = True
+
+    if pause_requested:
         try:
             printer_conn.write(b"M220 S0\n")
         except serial.SerialException:
@@ -729,26 +840,103 @@ def check_for_pause(progress):
         if action == 's':
             console.print("[bold red]Cancelling print and parking bed...[/bold red]")
             try:
-                printer_conn.write(b"M410\n")         # Quick Stop: Drops all buffered moves
+                printer_conn.write(b"M410\n")
                 time.sleep(0.5)
-                printer_conn.write(b"M220 S100\n")    # Restore normal speed 
+                printer_conn.reset_input_buffer()
+                printer_conn.write(b"M220 S100\n")
                 printer_conn.write(b"G91\n")
                 printer_conn.write(b"G1 Z30 F300\n")
                 printer_conn.write(b"G90\n")
-                printer_conn.write(b"G1 X-50 Y-50 F300\n")
+                
+                if START_FROM_CENTER:
+                    printer_conn.write(b"G1 X0 Y0 F300\n")
+                else:
+                    printer_conn.write(b"G1 X-50 Y-50 F300\n")
             except Exception as e:
                 console.print(f"[dim]Failed to send park command: {e}[/dim]")
-            return True 
+            return True
         else:
             console.print("[bold green]Resuming print...[/bold green]")
             try:
-                printer_conn.write(b"M220 S100\n")    # Restore normal speed
+                printer_conn.write(b"M220 S100\n")
             except serial.SerialException:
                 pass
             progress.start()
-            return False 
+            return False
             
     return False
+
+def load_file_menu():
+    """
+    BUG FIX #1 (stub): Implements the missing load file menu.
+    Lets the user browse translated_gcode/ and load a file for printing
+    without having to re-run the translator.
+    """
+    global loaded_filepath
+
+    out_dir = "translated_gcode"
+
+    if not os.path.exists(out_dir):
+        console.print(Panel(
+            f"[bold red]No '{out_dir}' directory found.[/bold red]\n\n"
+            "Translate a file first (option 2) to create it.",
+            border_style="red"
+        ))
+        time.sleep(2)
+        return
+
+    valid_extensions = ('.gcode', '.txt')
+    files = [f for f in os.listdir(out_dir) if f.lower().endswith(valid_extensions)]
+
+    if not files:
+        console.print(Panel(
+            f"[bold red]No translated files found in '{out_dir}'.[/bold red]\n\n"
+            "Translate a file first (option 2).",
+            border_style="red"
+        ))
+        time.sleep(2)
+        return
+
+    # Sort by most recently modified first
+    files.sort(key=lambda x: os.path.getmtime(os.path.join(out_dir, x)), reverse=True)
+
+    file_table = Table(
+        show_header=True,
+        header_style="bold green",
+        title=f"[bold cyan]Translated Files in '{out_dir}'[/bold cyan]"
+    )
+    file_table.add_column("#", justify="right", style="cyan", no_wrap=True)
+    file_table.add_column("Filename", style="magenta")
+    file_table.add_column("Last Modified", justify="right", style="green")
+    file_table.add_column("Size", justify="right", style="yellow")
+
+    for i, f in enumerate(files):
+        full_path = os.path.join(out_dir, f)
+        mtime = os.path.getmtime(full_path)
+        size_kb = os.path.getsize(full_path) / 1024
+        dt_str = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+        file_table.add_row(str(i + 1), f, dt_str, f"{size_kb:.1f} KB")
+
+    console.print(file_table)
+
+    # Highlight currently loaded file if any
+    if loaded_filepath:
+        console.print(f"\nCurrently loaded: [bold cyan]{os.path.basename(loaded_filepath)}[/bold cyan]")
+
+    console.print("[0] Cancel\n")
+
+    choice = IntPrompt.ask(
+        "[bold yellow]Select a file to load[/bold yellow]",
+        choices=[str(i) for i in range(len(files) + 1)]
+    )
+
+    if choice == 0:
+        return
+
+    selected_file = files[choice - 1]
+    loaded_filepath = os.path.join(out_dir, selected_file)
+    console.print(f"\n[bold green]Loaded:[/bold green] [cyan]{selected_file}[/cyan]")
+    time.sleep(1.5)
 
 def print_file():
     global printer_conn, loaded_filepath
@@ -764,8 +952,16 @@ def print_file():
         return
 
     console.print()
-    console.print(Panel("[bold yellow]ACTION REQUIRED: Please move the bed to the far bottom left corner before continuing.[/bold yellow]", border_style="yellow"))
-    ready = Prompt.ask("Is the bed in the bottom left position?", choices=["y", "n"], default="y")
+    
+    if START_FROM_CENTER:
+        warning_text = "ACTION REQUIRED: Please move the bed to the CENTER before continuing."
+        prompt_text = "Is the bed in the center position?"
+    else:
+        warning_text = "ACTION REQUIRED: Please move the bed to the far bottom left corner before continuing."
+        prompt_text = "Is the bed in the bottom left position?"
+        
+    console.print(Panel(f"[bold yellow]{warning_text}[/bold yellow]", border_style="yellow"))
+    ready = Prompt.ask(prompt_text, choices=["y", "n"], default="y")
     
     if ready.lower() != 'y':
         console.print("[bold red]Print cancelled.[/bold red]")
@@ -784,6 +980,8 @@ def print_file():
         f"[bold yellow]Starting print: {os.path.basename(loaded_filepath)}[/bold yellow]\n"
         f"[bold cyan]Press ENTER to PAUSE the print.[/bold cyan]"
     ))
+    
+    printer_conn.reset_input_buffer()
     
     with Progress(
         SpinnerColumn(),
@@ -827,8 +1025,8 @@ def print_file():
                         
                     if printer_conn.in_waiting > 0:
                         try:
-                            response = printer_conn.readline().decode('utf-8').strip()
-                            if response == 'ok' or response.startswith('ok'):
+                            response = printer_conn.readline().decode('utf-8', errors='ignore').strip()
+                            if 'ok' in response.lower():
                                 waiting_for_ok = False
                         except serial.SerialException:
                             console.print("[bold red]Serial connection lost during print![/bold red]")
@@ -843,7 +1041,6 @@ def print_file():
             command_sent = False
             progress.advance(task)
 
-        # Fix 2: Force synchronization at the very end of the file so we don't declare success early
         if not print_aborted and i >= len(lines):
             progress.update(task, description="[cyan]Finishing buffered moves in printer hardware...")
             try:
@@ -856,8 +1053,8 @@ def print_file():
                         
                     if printer_conn.in_waiting > 0:
                         try:
-                            response = printer_conn.readline().decode('utf-8').strip()
-                            if response == 'ok' or response.startswith('ok'):
+                            response = printer_conn.readline().decode('utf-8', errors='ignore').strip()
+                            if 'ok' in response.lower():
                                 waiting_for_ok = False
                         except serial.SerialException:
                             break
@@ -871,6 +1068,40 @@ def print_file():
     else:
         time.sleep(2)
 
+def update_orca():
+    global printer_conn
+    console.print(Panel("[bold cyan]Fetching latest updates from GitHub...[/bold cyan]", border_style="cyan"))
+    try:
+        result = subprocess.run(["git", "pull"], capture_output=True, text=True, check=True)
+        console.print("[bold green]Successfully pulled latest changes![/bold green]")
+        if result.stdout.strip():
+            console.print(f"[dim]{result.stdout.strip()}[/dim]")
+        
+        if "Already up to date." in result.stdout:
+            time.sleep(2)
+            return
+
+        console.print("\n[bold yellow]Restarting ORCA to apply updates...[/bold yellow]")
+        time.sleep(2)
+        
+        # BUG FIX #7: close serial cleanly before exec-replacing the process
+        if printer_conn:
+            try:
+                printer_conn.close()
+            except Exception:
+                pass
+            printer_conn = None
+            
+        os.execl(sys.executable, sys.executable, *sys.argv)
+    except subprocess.CalledProcessError as e:
+        console.print("[bold red]Failed to update from GitHub.[/bold red]")
+        if e.stderr:
+            console.print(f"[dim]{e.stderr.strip()}[/dim]")
+        time.sleep(3)
+    except Exception as e:
+        console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+        time.sleep(3)
+
 def main():
     while True:
         console.clear()
@@ -883,11 +1114,16 @@ def main():
         console.print(f"Loaded File:    {file_status}\n")
 
         console.print("[bold yellow]--- Main Menu ---[/bold yellow]")
+        
+        valid_choices = ["1", "2", "3", "7", "8", "9"]
+        
+        if printer_conn:
+            console.print("[0] [bold red]Reset / Reboot Printer Board[/bold red]")
+            valid_choices.append("0")
+            
         console.print("[1] Connect to Printer")
         console.print("[2] Translate G-Code")
         console.print("[3] Load Translated File")
-        
-        valid_choices = ["1", "2", "3", "7", "8"]
         
         if printer_conn and loaded_filepath:
             console.print("[4] [bold green]Print Loaded File[/bold green]")
@@ -897,20 +1133,24 @@ def main():
             
         if printer_conn:
             console.print("[5] [bold cyan]Manual G-Code Terminal[/bold cyan]")
-            console.print("[6] [bold cyan]Adjust Printer[/bold cyan]")
+            jog_label = "[bold cyan]Adjust Printer[/bold cyan]" if PYNPUT_AVAILABLE else "[dim]Adjust Printer (unavailable headless)[/dim]"
+            console.print(f"[6] {jog_label}")
             valid_choices.extend(["5", "6"])
         else:
             console.print("[5] [dim]Manual G-Code Terminal (Requires Connection)[/dim]")
             console.print("[6] [dim]Interactive Jog Control (Requires Connection)[/dim]")
             
         console.print("[7] Options / Settings")
-        console.print("[8] Exit\n")
+        console.print("[8] Update ORCA from GitHub")
+        console.print("[9] Exit\n")
 
-        valid_choices.sort()
+        valid_choices = sorted(set(valid_choices))
 
         choice = Prompt.ask("[bold yellow]Choose an option[/bold yellow]", choices=valid_choices)
 
-        if choice == "1":
+        if choice == "0":
+            reset_printer_board()
+        elif choice == "1":
             connect_to_printer()
         elif choice == "2":
             translate_gcode()
@@ -928,15 +1168,23 @@ def main():
         elif choice == "7":
             settings_menu()
         elif choice == "8":
+            update_orca()
+        elif choice == "9":
             if printer_conn:
-                printer_conn.close()
+                try:
+                    printer_conn.close()
+                except Exception:
+                    pass
             console.print("[bold magenta]Goodbye![/bold magenta]")
             break
 
-if __name__== "__main__":
+if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
         if printer_conn:
-            printer_conn.close()
+            try:
+                printer_conn.close()
+            except Exception:
+                pass
         console.print("\n[bold magenta]Goodbye![/bold magenta]")
