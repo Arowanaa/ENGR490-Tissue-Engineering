@@ -85,14 +85,14 @@ def display_header():
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣿⣿⣿⣿⡆⠀⠀⠀⠀⠀⢀⣀⣄⡀⠰⠴⣶⣶⣤⣤⡀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣿⣿⣿⣿⣿⡇⠀⢀⣤⣶⣻⣾⣿⣴⣴⣾⣿⣿⣿⣿⣿⣿⡆
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⣿⣿⣿⣿⣿⣿⣥⣾⠿⢿⣿⣽⣾⣿⣿⣿⣿⣿⣿⣿⠿⢿⡿⣧
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⠟⠉⠀⠀⠀⣸⣿⣿⣿⣿⡿⠟⠛⠋⠉⠐⠊⠡⢹⢚    ____  _____  _____         
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⠟⠉⠀⠀⠀⣸⣿⣿⣿⣿⡿⠟⠛⠋⠉⠐⠊⠡⢹⢚    __   ____     ____         
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣠⣤⣤⡴⠂⠐⠒⢨⣿⣿⣿⣿⣿⣿⣤⣆⣤⣠⣴⣾⣿⣷⡿⠋⠁⠀⠀⠀⠀⠀⠐⣁⠎⠀⡘  / __ \|  __ \ / ____|   /\   
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢐⣠⣤⣶⣾⣿⣿⣿⣿⣿⣆⡀⡀⣀⣨⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡜⠀⠀⡐⠀ | |  | | |__) | |       /  \   
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣴⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠛⠁⠀⠀⠀⠀⠀⠀⠀⠄⠀⠄⠀⠀⠀⠀⠀⠂⠀⠀ | |  | |  _  /| |      / /\ \  
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣴⡶⠿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡠⠂⠀⠀⠀ | |__| | | \ \| |____ / ____ \ 
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣵⣿⣿⣅⠀⠀⠀⠀⢈⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠂⠀⠀⠀⠀⠀  \____/|_|  \_\\_____/_/    \_\
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣶⣦⣌⠁⠀⠉⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⡞⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠜⠁⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.13[/cyan]
+⠀⠀⠀⣀⣀⣤⢤⢤⡴⢶⣾⡿⠿⣛⠩⠀⠉⠉⠙⠛⠻⠿⢏⡀⠀⠀⠀⠙⠻⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢈⡷⠀⠀⠀⠀⠀⠀⠀⠀⣠⣷⣿⡀⠀⠀⠀⠀⠀⠀⠀         [cyan]v1.0.17[/cyan]
 ⢠⠖⠋⠉⠀⢀⠀⠂⣌⢇⠀⣰⣿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⣄⠀⡀⠀⠀⢀⣽⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⣐⠰⠂⠀⠀⠀⠀⡀⣠⣴⣾⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠛⠓⠒⠲⢤⣀⣐⣤⡞⣸⢊⠥⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠀⢀⣤⣿⣿⣿⣿⣿⣿⣿⡿⠟⠋⢄⣀⠀⠠⠤⠴⠂⠈⠁⢰⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⢿⠃⠀⠀⠸⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠉⠉⠉⠉⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀
@@ -130,6 +130,7 @@ def serial_listener():
 # ============================================================
 # --- SAFE COMMAND SENDER ---
 # ============================================================
+
 
 def send_gcode(command, timeout=15, retries=3, wait_for_ok=True):
     """
@@ -198,7 +199,7 @@ def send_gcode(command, timeout=15, retries=3, wait_for_ok=True):
 
 def settings_menu():
     global COORDINATE_MODE, EXTRUSION_COEFFICIENT, DO_AUTO_PRESSURIZE
-    global HIGH_PRECISION_JOG, START_FROM_CENTER
+    global HIGH_PRECISION_JOG
 
     while True:
         console.clear()
@@ -224,7 +225,7 @@ def settings_menu():
         )
         config_table.add_row(
             "Jog Precision", "[green]HIGH[/green]" if HIGH_PRECISION_JOG else "[yellow]LOW[/yellow]",
-            "Start from Center", "[green]ON[/green]" if START_FROM_CENTER else "[red]OFF[/red]"
+            "", ""
         )
 
         console.print(config_table)
@@ -233,12 +234,11 @@ def settings_menu():
         console.print("[2] Toggle Auto-Pressurize")
         console.print("[3] Toggle Coordinate Mode (G90/G91)")
         console.print("[4] Toggle Jog Precision Mode")
-        console.print("[5] Toggle Start from Center")
-        console.print("[6] Return to Main Menu\n")
+        console.print("[5] Return to Main Menu\n")
 
         choice = Prompt.ask(
             "[bold yellow]Choose an option[/bold yellow]",
-            choices=["1", "2", "3", "4", "5", "6"]
+            choices=["1", "2", "3", "4", "5"]
         )
 
         if choice == "1":
@@ -255,9 +255,8 @@ def settings_menu():
         elif choice == "4":
             HIGH_PRECISION_JOG = not HIGH_PRECISION_JOG
         elif choice == "5":
-            START_FROM_CENTER = not START_FROM_CENTER
-        elif choice == "6":
             break
+
 
 # ============================================================
 # --- CONNECT TO PRINTER ---
@@ -530,7 +529,7 @@ def manual_control_menu():
         "[bold cyan]Manual G-Code Terminal[/bold cyan]\n"
         "Type your G-Code commands and press Enter.\n"
         "Movement commands (G0/G1) default to F300 if no speed is specified.\n\n"
-        "[bold yellow]TIP:[/bold yellow] Send [bold green]G28[/bold green] to home all axes using your firmware configuration.\n"
+        "[bold yellow]TIP:[/bold yellow] Send [bold green]G28[/bold green] to sensorless-home all axes using your firmware configuration.\n"
         "Send [bold green]G91[/bold green] to switch to Relative Mode for manual moves.\n\n"
         "Type [bold yellow]'q'[/bold yellow] or [bold yellow]'quit'[/bold yellow] to return to the main menu.",
         border_style="cyan"
@@ -650,16 +649,11 @@ def translate_gcode():
     try:
         f_new.write(COORDINATE_MODE + "\n")
         f_new.write("; --- Initialization Sequence ---\n")
-        f_new.write("G90 ; Force absolute positioning for setup\n")
-
-        if START_FROM_CENTER:
-            f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero all axes at the current center position\n")
-        else:
-            f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero at confirmed bottom-left corner\n")
-            f_new.write("G1 Z30 F300 ; Z-hop up 30mm to clear dish walls\n")
-            f_new.write("G1 X50 Y50 F300 ; Move to the center\n")
-            f_new.write("G1 Z0 F300 ; Drop back down to original height before printing\n")
-            f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Re-zero all axes at the center\n")
+        f_new.write("G28 X Y Z ; Sensorless home all axes (StallGuard, configured in firmware)\n")
+        f_new.write("G91 ; Relative positioning to travel off the homed corner\n")
+        f_new.write("G1 X50 Y67 Z-90 F300 ; Move from home to the print start position\n")
+        f_new.write("G90 ; Back to absolute positioning\n")
+        f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero all axes at the print start position\n")
 
         if COORDINATE_MODE == "G91":
             f_new.write("G91 ; Restore relative positioning\n")
@@ -921,10 +915,7 @@ def translate_gcode():
         f_new.write("G91 ; Switch to relative positioning\n")
         f_new.write("G1 Z30 F300 ; Lift nozzle 30mm to safely clear the print\n")
         f_new.write("G90 ; Switch back to absolute positioning\n")
-        if START_FROM_CENTER:
-            f_new.write("G1 X0 Y0 F300 ; Park the bed back at the center\n")
-        else:
-            f_new.write("G1 X-50 Y-50 F300 ; Park the bed back at the original bottom-left edge\n")
+        f_new.write("G1 X0 Y0 F300 ; Park at the print origin\n")
         f_new.write("; -----------------------------\n")
 
     finally:
@@ -967,7 +958,6 @@ def check_for_pause(progress):
     Lets the user pause, then choose to resume or cancel.
     Returns True if the print should be aborted.
     """
-    global START_FROM_CENTER
     pause_requested = False
 
     if sys.platform == 'win32':
@@ -1004,10 +994,7 @@ def check_for_pause(progress):
                 send_gcode("G91", wait_for_ok=False)
                 send_gcode("G1 Z30 F300", wait_for_ok=False)
                 send_gcode("G90", wait_for_ok=False)
-                if START_FROM_CENTER:
-                    send_gcode("G1 X0 Y0 F300", wait_for_ok=False)
-                else:
-                    send_gcode("G1 X-50 Y-50 F300", wait_for_ok=False)
+                send_gcode("G1 X0 Y0 F300", wait_for_ok=False)
             except Exception as e:
                 console.print(f"[dim]Failed to send park command: {e}[/dim]")
             return True
@@ -1105,15 +1092,14 @@ def print_file():
 
     console.print()
 
-    if START_FROM_CENTER:
-        warning_text = "ACTION REQUIRED: Please move the bed to the CENTER before continuing."
-        prompt_text = "Is the bed in the center position?"
-    else:
-        warning_text = "ACTION REQUIRED: Please move the bed to the far bottom-left corner before continuing."
-        prompt_text = "Is the bed in the bottom-left position?"
-
+    # The translated file now begins with G28 sensorless homing, so the bed no
+    # longer needs to be positioned by hand — just make sure it can home safely.
+    warning_text = (
+        "ACTION REQUIRED: The print will begin by sensorless-homing all axes (G28).\n"
+        "Make sure each axis can travel freely to its endstop and the build area is clear."
+    )
     console.print(Panel(f"[bold yellow]{warning_text}[/bold yellow]", border_style="yellow"))
-    ready = Prompt.ask(prompt_text, choices=["y", "n"], default="y")
+    ready = Prompt.ask("Ready to home and start the print?", choices=["y", "n"], default="y")
 
     if ready.lower() != 'y':
         console.print("[bold red]Print cancelled.[/bold red]")
@@ -1167,7 +1153,11 @@ def print_file():
                 continue
 
             try:
-                send_gcode(command)
+                # G28 (home) at the top of the file can take a while; give it room
+                if command.upper().startswith("G28") or command.upper().startswith("G29"):
+                    send_gcode(command, timeout=180)
+                else:
+                    send_gcode(command)
             except RuntimeError as e:
                 console.print(f"\n[bold red]PRINT FAILED:[/bold red] {e}")
                 print_aborted = True
