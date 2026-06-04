@@ -617,7 +617,7 @@ def translate_gcode():
     selected_file = files[choice - 1]
     input_filepath = os.path.join(raw_dir, selected_file)
 
-    proceed = review_settings_before_translation(selected_file)
+    proceed, z_offset = review_settings_before_translation(selected_file)
     if not proceed:
         return
 
@@ -654,6 +654,10 @@ def translate_gcode():
         f_new.write("G1 X50 Y67 Z-90 F300 ; Move from home to the print start position\n")
         f_new.write("G90 ; Back to absolute positioning\n")
         f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero all axes at the print start position\n")
+        if z_offset != 0.0:
+            f_new.write(
+                f"; Z height offset: {z_offset:+.3f} mm baked into every Z coordinate below\n"
+            )
 
         if COORDINATE_MODE == "G91":
             f_new.write("G91 ; Restore relative positioning\n")
@@ -872,7 +876,7 @@ def translate_gcode():
                     if r is not None: write_line += ' R' + str(r)
                     if i is not None: write_line += ' I' + str(i)
                     if j is not None: write_line += ' J' + str(j)
-                if z is not None:  write_line += ' Z' + str(z)
+                if z is not None:  write_line += ' Z' + str(round(z + z_offset, 4))
                 if a is not None:  write_line += ' A' + str(a)
                 if e is not None and g != 0:
                     write_line += f' {EXTRUSION_AXIS}' + str(round(e, 3))
@@ -1233,6 +1237,9 @@ def update_orca():
 
 def review_settings_before_translation(filename):
     global COORDINATE_MODE, EXTRUSION_COEFFICIENT, DO_AUTO_PRESSURIZE
+    global Z_SYRINGE_DIAMETER, Z_NOZZLE_DIAMETER, A_SYRINGE_DIAMETER, A_NOZZLE_DIAMETER
+
+    z_offset = 0.0
 
     while True:
         console.clear()
@@ -1258,21 +1265,31 @@ def review_settings_before_translation(filename):
             "Auto-Pressurize", "[green]ON[/green]" if DO_AUTO_PRESSURIZE else "[red]OFF[/red]"
         )
 
+        if z_offset > 0:
+            z_offset_display = f"[bold green]+{z_offset} mm[/bold green]  (nozzle moves UP — substrate thinner than expected)"
+        elif z_offset < 0:
+            z_offset_display = f"[bold red]{z_offset} mm[/bold red]  (nozzle moves DOWN — substrate thicker than expected)"
+        else:
+            z_offset_display = "[dim]0.0 mm (no offset)[/dim]"
+        config_table.add_row("Z Height Offset", z_offset_display, "", "")
+
         console.print(config_table)
         console.print("\n[bold yellow]--- Pre-Translation Check ---[/bold yellow]")
         console.print("[1] [bold green]Proceed with Translation[/bold green]")
         console.print("[2] Change Extrusion Coefficient")
         console.print("[3] Toggle Auto-Pressurize")
         console.print("[4] Toggle Coordinate Mode")
-        console.print("[5] Cancel\n")
+        console.print("[5] Edit Syringe / Nozzle Diameters")
+        console.print("[6] Set Z Height Offset")
+        console.print("[0] Cancel\n")
 
         choice = Prompt.ask(
             "[bold yellow]Choose an option[/bold yellow]",
-            choices=["1", "2", "3", "4", "5"]
+            choices=["0", "1", "2", "3", "4", "5", "6"]
         )
 
         if choice == "1":
-            return True
+            return True, z_offset
         elif choice == "2":
             new_coeff = Prompt.ask("Enter new Extrusion Coefficient", default=str(EXTRUSION_COEFFICIENT))
             try:
@@ -1285,7 +1302,38 @@ def review_settings_before_translation(filename):
         elif choice == "4":
             COORDINATE_MODE = "G91" if COORDINATE_MODE == "G90" else "G90"
         elif choice == "5":
-            return False
+            console.print("\n[bold cyan]Edit Diameters[/bold cyan]")
+            val = Prompt.ask("  Z Syringe inner diameter (mm)", default=str(Z_SYRINGE_DIAMETER))
+            try: Z_SYRINGE_DIAMETER = float(val)
+            except ValueError: console.print("[bold red]Invalid.[/bold red]")
+
+            val = Prompt.ask("  Z Nozzle diameter (mm)", default=str(Z_NOZZLE_DIAMETER))
+            try: Z_NOZZLE_DIAMETER = float(val)
+            except ValueError: console.print("[bold red]Invalid.[/bold red]")
+
+            val = Prompt.ask("  A Syringe inner diameter (mm)", default=str(A_SYRINGE_DIAMETER))
+            try: A_SYRINGE_DIAMETER = float(val)
+            except ValueError: console.print("[bold red]Invalid.[/bold red]")
+
+            val = Prompt.ask("  A Nozzle diameter (mm)", default=str(A_NOZZLE_DIAMETER))
+            try: A_NOZZLE_DIAMETER = float(val)
+            except ValueError: console.print("[bold red]Invalid.[/bold red]")
+
+        elif choice == "6":
+            console.print(
+                "\n[bold cyan]Z Height Offset[/bold cyan]\n"
+                "Shifts every Z coordinate in the translated file by this amount.\n"
+                "  [bold green]Positive[/bold green] → nozzle travels higher (substrate thinner than expected)\n"
+                "  [bold red]Negative[/bold red]  → nozzle travels lower  (substrate thicker than expected)\n"
+            )
+            val = Prompt.ask("Enter Z offset in mm (e.g. 0.3 or -0.15)", default=str(z_offset))
+            try:
+                z_offset = float(val)
+            except ValueError:
+                console.print("[bold red]Invalid number.[/bold red]")
+                time.sleep(1.5)
+        elif choice == "0":
+            return False, z_offset
 
 # ============================================================
 # --- MAIN MENU ---
