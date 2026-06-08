@@ -72,6 +72,7 @@ printer_conn = None
 loaded_filepath = None
 
 printer_lock = threading.Lock()
+printer_homed = False   # True only after a successful G28 this session
 printer_response_queue = queue.Queue()
 
 printer_listener_running = False
@@ -328,8 +329,10 @@ def connect_to_printer():
         # the M115 response lines can print cleanly without fighting the spinner)
         send_gcode("M115", timeout=10)
 
+        printer_homed = False   # position reference lost on disconnect/reconnect
         console.print(f"[bold green]Successfully connected to {selected_port}![/bold green]")
-        time.sleep(1)
+        console.print("[bold yellow]Note: axes are unhomed. Home before printing or jogging.[/bold yellow]")
+        time.sleep(1.5)
 
     except Exception as e:
         console.print(f"[bold red]Failed to connect: {e}[/bold red]")
@@ -371,7 +374,9 @@ def reset_printer_board():
             except queue.Empty:
                 break
 
+        printer_homed = False   # position reference wiped by reset
         console.print("[bold green]Printer reset complete. Give it a moment to finish booting.[/bold green]")
+        console.print("[bold yellow]Note: axes are unhomed. Home before printing or jogging.[/bold yellow]")
         time.sleep(2)
 
     except Exception as e:
@@ -557,8 +562,10 @@ def manual_control_menu():
             # G28 (home) and G29 (bed levelling) can take minutes; use a longer timeout
             if cmd_upper.startswith("G28") or cmd_upper.startswith("G29"):
                 send_gcode(cmd_upper, timeout=180)
-            else:
-                send_gcode(cmd_upper)
+                if cmd_upper.startswith("G28"):
+                    printer_homed = True
+                else:
+                    send_gcode(cmd_upper)
         except Exception as e:
             console.print(f"[bold red]Error:[/bold red] {e}")
 
@@ -649,9 +656,12 @@ def translate_gcode():
     try:
         f_new.write(COORDINATE_MODE + "\n")
         f_new.write("; --- Initialization Sequence ---\n")
+        f_new.write("G91 ; Relative mode for pre-home backoff\n")
+        f_new.write("G1 X-0.1 Y-0.1 Z-0.1 F300 ; Nudge away from MAX home direction to allow for\n")
+        f_new.write("G90 ; Back to absolute before homing\n")
         f_new.write("G28 X Y Z ; Sensorless home all axes (StallGuard, configured in firmware)\n")
         f_new.write("G91 ; Relative positioning to travel off the homed corner\n")
-        f_new.write("G1 X50 Y67 Z-90 F300 ; Move from home to the print start position\n")
+        f_new.write("G1 X50 Y67 Z-89.97 F300 ; Move from home to the print start position\n")
         f_new.write("G90 ; Back to absolute positioning\n")
         f_new.write(f"G92 X0 Y0 Z0 {EXTRUSION_AXIS}0 ; Zero all axes at the print start position\n")
 
@@ -986,18 +996,19 @@ def check_for_pause(progress):
         )
 
         if action == 's':
-            console.print("[bold red]Cancelling print and parking...[/bold red]")
-            try:
-                send_gcode("M410", wait_for_ok=False)
-                time.sleep(0.5)
-                send_gcode("M220 S100", wait_for_ok=False)
-                send_gcode("G91", wait_for_ok=False)
-                send_gcode("G1 Z30 F300", wait_for_ok=False)
-                send_gcode("G90", wait_for_ok=False)
-                send_gcode("G1 X0 Y0 F300", wait_for_ok=False)
-            except Exception as e:
-                console.print(f"[dim]Failed to send park command: {e}[/dim]")
-            return True
+                console.print("[bold red]Cancelling print and parking...[/bold red]")
+                try:
+                    send_gcode("M410", wait_for_ok=False)
+                    time.sleep(0.5)
+                    send_gcode("M220 S100", wait_for_ok=False)
+                    send_gcode("G91", wait_for_ok=False)
+                    send_gcode("G1 Z30 F300", wait_for_ok=False)
+                    send_gcode("G90", wait_for_ok=False)
+                    send_gcode("G1 X0 Y0 F300", wait_for_ok=False)
+                except Exception as e:
+                    console.print(f"[dim]Failed to send park command: {e}[/dim]")
+                printer_homed = False   # position now uncertain after cancel
+                return True
         else:
             console.print("[bold green]Resuming print...[/bold green]")
             try:
@@ -1092,20 +1103,48 @@ def print_file():
 
     console.print()
 
-    # The translated file now begins with G28 sensorless homing, so the bed no
-    # longer needs to be positioned by hand — just make sure it can home safely.
-    warning_text = (
-        "ACTION REQUIRED: The print will begin by sensorless-homing all axes (G28).\n"
-        "Make sure each axis can travel freely to its endstop and the build area is clear."
-    )
-    console.print(Panel(f"[bold yellow]{warning_text}[/bold yellow]", border_style="yellow"))
-    ready = Prompt.ask("Ready to home and start the print?", choices=["y", "n"], default="y")
+    global printer_homed
 
-    if ready.lower() != 'y':
-        console.print("[bold red]Print cancelled.[/bold red]")
-        time.sleep(1.5)
-        return
+    if not printer_homed:
+        console.print(Panel(
+            "[bold red]AXES ARE UNHOMED[/bold red]\n\n"
+            "The printer has been disconnected, reset, or had a print cancelled since the\n"
+            "last successful home. Commanding a move without homing first can drive a motor\n"
+            "past the end of its travel.\n\n"
+            "[bold yellow]A G28 sensorless home will run now before the print starts.[/bold yellow]\n"
+            "Make sure every axis can travel freely to its endstop and the build area is clear.",
+            border_style="red"
+        ))
+        ready = Prompt.ask("Ready to home all axes and start the print?", choices=["y", "n"], default="y")
+        if ready.lower() != 'y':
+            console.print("[bold red]Print cancelled.[/bold red]")
+            time.sleep(1.5)
+            return
 
+        console.print("[bold cyan]Homing all axes...[/bold cyan]")
+        try:
+            send_gcode("G28", timeout=180)
+            printer_homed = True
+            console.print("[bold green]Homing complete.[/bold green]")
+            time.sleep(1)
+        except Exception as e:
+            console.print(f"[bold red]Homing failed: {e}[/bold red]")
+            console.print("[yellow]Print aborted. Check connections and try again.[/yellow]")
+            time.sleep(2)
+            return
+    else:
+        # Already homed this session — just confirm the build area is clear
+        console.print(Panel(
+            "[bold yellow]ACTION REQUIRED[/bold yellow]\n\n"
+            "The print will begin by sensorless-homing all axes (G28) as part of the\n"
+            "translated file. Make sure the build area is clear.",
+            border_style="yellow"
+        ))
+        ready = Prompt.ask("Ready to start the print?", choices=["y", "n"], default="y")
+        if ready.lower() != 'y':
+            console.print("[bold red]Print cancelled.[/bold red]")
+            time.sleep(1.5)
+            return
     try:
         with open(loaded_filepath, "r") as file:
             lines = file.readlines()
@@ -1160,6 +1199,7 @@ def print_file():
                     send_gcode(command)
             except RuntimeError as e:
                 console.print(f"\n[bold red]PRINT FAILED:[/bold red] {e}")
+                printer_homed = False   # position now uncertain after failure
                 print_aborted = True
                 break
             except KeyboardInterrupt:
@@ -1171,6 +1211,7 @@ def print_file():
                     send_gcode("G90", wait_for_ok=False)
                 except Exception:
                     pass
+                printer_homed = False   # position now uncertain after interrupt
                 print_aborted = True
                 break
 
